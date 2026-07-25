@@ -157,6 +157,7 @@ echo "=== Step 1/3: Create boomerang clip ==="
 ffmpeg -y -i "$VIDEO" \
   -filter_complex "[0:v]split[fw][rev];[rev]reverse[rv];[fw][rv]concat=n=2:v=1:a=0" \
   -c:v "$CODEC" -crf "$CRF" -an \
+  -movflags +faststart \
   "$BOOMERANG_FILE"
 
 echo ""
@@ -190,6 +191,7 @@ ffmpeg -y -i "$BOOMERANG_FILE" -i "$LOGO" \
      [0:v]${SCALE_FILTER}[main]; \
      [main][wm]overlay=${OVERLAY_POS}:shortest=1" \
   -c:v "$CODEC" -crf "$CRF" -c:a copy \
+  -movflags +faststart \
   "$WATERMARKED"
 
 echo ""
@@ -197,6 +199,7 @@ echo "=== Step 3/3: Loop to match audio ==="
 ffmpeg -y -stream_loop -1 -i "$WATERMARKED" -i "$AUDIO" \
   -map 0:v:0 -map 1:a:0 \
   -c:v copy -c:a "$AUDIO_CODEC" \
+  -movflags +faststart \
   -shortest \
   "$OUTPUT"
 

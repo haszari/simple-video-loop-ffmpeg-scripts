@@ -13,8 +13,8 @@
 #   video   Path to the video file (looped to match audio length)
 #
 # Flags:
-#   -c, --codec        Video encoder (default: copy)
-#   -q, --crf          CRF quality (omit for copy default)
+#   -c, --codec        Video encoder (default: libx264)
+#   -q, --crf          CRF quality (default: 23)
 #   -a, --audio-codec  Audio encoder (default: aac)
 #   -o, --output       Output file path (default: renders/<audio>.<video-ext>)
 #   -s, --start        Trim audio start time (e.g. 00:01:30)
@@ -33,6 +33,7 @@
 #   ./audio-loop-video.sh -s 00:01:30 -e 00:45:00 music.mp3 bg.mp4
 #   ./audio-loop-video.sh -s 00:01:30 -e 00:45:00 -f 0.1 music.mp3 bg.mp4
 #   ./audio-loop-video.sh -c libx265 -q 23 -o final.mp4 music.mp3 bg.mp4
+#   ./audio-loop-video.sh -c copy music.mp3 bg.mp4  # fast, no re-encode
 #
 # Requires: ffmpeg
 #
@@ -47,23 +48,7 @@ die() { echo "Error: $*" >&2; exit 1; }
 
 # Convert HH:MM:SS or MM:SS or seconds to raw seconds for arithmetic
 time_to_seconds() {
-  local t="$1"
-  local ncolons="${t//[^:]}"
-  ncolons=${#ncolons}
-  if [[ $ncolons -eq 2 ]]; then
-    # HH:MM:SS
-    local h m s
-    IFS=: read -r h m s <<< "$t"
-    echo "$h * 3600 + $m * 60 + $s" | bc
-  elif [[ $ncolons -eq 1 ]]; then
-    # MM:SS
-    local m s
-    IFS=: read -r m s <<< "$t"
-    echo "$m * 60 + $s" | bc
-  else
-    # Raw seconds
-    echo "$t"
-  fi
+  echo "$1" | awk -F: '{ s=0; for(i=1;i<=NF;i++) s=s*60+$i; printf "%.6f", s }'
 }
 
 # Map video codec to conventional file extension
@@ -76,8 +61,8 @@ codec_to_ext() {
   esac
 }
 
-CODEC="copy"
-CRF=""
+CODEC="libx264"
+CRF="23"
 AUDIO_CODEC="aac"
 OUTPUT=""
 START=""
@@ -130,10 +115,8 @@ case "$AUDIO_CODEC" in
   *) die "unknown audio codec: $AUDIO_CODEC (allowed: aac libmp3lame libopus copy)" ;;
 esac
 
-# Validate CRF if provided
-if [[ -n "$CRF" ]]; then
-  [[ "$CRF" =~ ^[0-9]+$ ]] || die "CRF must be a non-negative integer, got: $CRF"
-fi
+# Validate CRF
+[[ "$CRF" =~ ^[0-9]+$ ]] || die "CRF must be a non-negative integer, got: $CRF"
 
 # Validate fade
 [[ "$FADE" =~ ^[0-9]*\.?[0-9]+$ ]] || die "fade must be a positive number, got: $FADE"
@@ -161,15 +144,14 @@ if [[ -z "$OUTPUT" ]]; then
 fi
 mkdir -p "$(dirname "$OUTPUT")"
 
-# Build audio filter chain (trim + fade)
+# Build audio trim args and fade filter
+AUDIO_INPUT_ARGS=()
 AUDIO_FILTER=()
 TRIMMING=false
 if [[ -n "$START" || -n "$END" ]]; then
   TRIMMING=true
-  TRIM_ARGS=""
-  [[ -n "$START" ]] && TRIM_ARGS+="start=${START}"
-  [[ -n "$END" ]] && { [[ -n "$TRIM_ARGS" ]] && TRIM_ARGS+=":"; TRIM_ARGS+="end=${END}"; }
-  AUDIO_FILTER+=("atrim=${TRIM_ARGS}" "asetpts=PTS-STARTPTS")
+  [[ -n "$START" ]] && AUDIO_INPUT_ARGS+=(-ss "$START")
+  [[ -n "$END" ]] && AUDIO_INPUT_ARGS+=(-to "$END")
 
   # Calculate trimmed duration for fade-out timing
   DURATION=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$AUDIO")
@@ -192,6 +174,8 @@ fi
 # Build ffmpeg codec args
 CODEC_ARGS=(-c:v "$CODEC")
 [[ -n "$CRF" ]] && CODEC_ARGS+=(-crf "$CRF")
+# Use hvc1 tag for HEVC — required for QuickTime/macOS compatibility
+[[ "$CODEC" == "libx265" ]] && CODEC_ARGS+=(-tag:v hvc1)
 
 echo "Looping video to match audio..."
 echo "  Audio:  $AUDIO"
@@ -199,17 +183,19 @@ echo "  Video:  $VIDEO"
 echo "  Output: $OUTPUT"
 [[ "$TRIMMING" == true ]] && echo "  Trim:   ${START:-0} → ${END:-end} (fade ${FADE}s)"
 
-# Build ffmpeg audio args
-AUDIO_ARGS=()
+# Build ffmpeg audio filter args
+AUDIO_FILTER_ARGS=()
 if [[ ${#AUDIO_FILTER[@]} -gt 0 ]]; then
   FILTER_STRING=$(IFS=,; echo "${AUDIO_FILTER[*]}")
-  AUDIO_ARGS+=(-af "$FILTER_STRING")
+  AUDIO_FILTER_ARGS+=(-af "$FILTER_STRING")
 fi
 
-ffmpeg -y -stream_loop -1 -i "$VIDEO" -i "$AUDIO" \
+ffmpeg -y -stream_loop -1 -i "$VIDEO" \
+  "${AUDIO_INPUT_ARGS[@]}" -i "$AUDIO" \
   -map 0:v:0 -map 1:a:0 \
   "${CODEC_ARGS[@]}" -c:a "$AUDIO_CODEC" \
-  "${AUDIO_ARGS[@]}" \
+  "${AUDIO_FILTER_ARGS[@]}" \
+  -movflags +faststart \
   -shortest \
   "$OUTPUT"
 

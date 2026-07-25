@@ -157,6 +157,7 @@ ffmpeg -y -i "$VIDEO" -i "$LOGO" \
      [0:v]${SCALE_FILTER}[main]; \
      [main][wm]overlay=${OVERLAY_POS}:shortest=1" \
   -c:v "$CODEC" -crf "$CRF" -c:a copy \
+  -movflags +faststart \
   "$OUTPUT"
 
 echo "Done: $OUTPUT"

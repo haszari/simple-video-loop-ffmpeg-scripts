@@ -21,7 +21,7 @@ FFmpeg-based shell scripts for video/audio manipulation. Each script is self-con
 ```bash
 chmod +x scripts/*.sh
 
-# Loop video to match audio — fast copy, no re-encode
+# Loop video to match audio — H.264, QuickTime-compatible
 ./scripts/audio-loop-video.sh music.mp3 bg.mp4
 
 # Trim audio from 1:30 to 45:00 with auto 40ms fades
@@ -30,8 +30,8 @@ chmod +x scripts/*.sh
 # Trim with custom 100ms fade
 ./scripts/audio-loop-video.sh -s 00:01:30 -e 00:45:00 -f 0.1 music.mp3 bg.mp4
 
-# Loop video + re-encode to HEVC (best quality per byte)
-./scripts/audio-loop-video.sh -c libx265 -q 23 music.mp3 bg.mp4
+# Fast copy, no re-encode (may not work in QuickTime)
+./scripts/audio-loop-video.sh -c copy music.mp3 bg.mp4
 
 # Boomerang clip
 ./scripts/boomerang.sh clip.mp4
@@ -60,8 +60,8 @@ Loops a video infinitely, then trims to match the audio file duration. The video
 
 | Flag | Description | Default |
 |---|---|---|
-| `-c`, `--codec` | Video encoder | `copy` (no re-encode, fast) |
-| `-q`, `--crf` | CRF quality (ignored when codec is `copy`) | — |
+| `-c`, `--codec` | Video encoder | `libx264` (H.264, QuickTime-compatible) |
+| `-q`, `--crf` | CRF quality | `23` |
 | `-a`, `--audio-codec` | Audio encoder | `aac` |
 | `-o`, `--output` | Output path | `renders/<audio>.<video-ext>` |
 | `-s`, `--start` | Trim audio start time (e.g. `00:01:30`) | — |
@@ -155,7 +155,7 @@ Codec and quality flags are passed through to ffmpeg. See [ffmpeg codecs](https:
 ## Tips
 
 - **Recommended codec:** `-c libx265 -q 23` gives the best quality per byte for long videos.
-- **Fast iteration:** Use `-c copy` in `audio-loop-video.sh` when the video codec is already compatible — avoids re-encoding.
+- **Fast iteration:** Use `-c copy` in `audio-loop-video.sh` when the video codec is already compatible — avoids re-encoding. Note: output may not work in QuickTime.
 - **Transparency:** Use PNG logos for watermark transparency. JPG logos will have a solid background.
 - **Boomerang quality:** The boomerang script re-encodes to ensure frame-level precision for the reverse. Use `--keep-boomerang` in `combine.sh` to inspect the intermediate file.
 - **Cleanup:** Intermediate files in `/tmp` are cleaned up automatically on script exit. Use `--keep-boomerang` to retain them for debugging.

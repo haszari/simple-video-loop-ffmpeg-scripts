@@ -92,6 +92,7 @@ echo "  Output: $OUTPUT"
 ffmpeg -y -i "$VIDEO" \
   -filter_complex "[0:v]split[fw][rev];[rev]reverse[rv];[fw][rv]concat=n=2:v=1:a=0" \
   -c:v "$CODEC" -crf "$CRF" -an \
+  -movflags +faststart \
   "$OUTPUT"
 
 echo "Done: $OUTPUT"
