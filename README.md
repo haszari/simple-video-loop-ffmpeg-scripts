@@ -2,9 +2,9 @@
 
 Shell scripts for easily producing atmospheric videos for DJ mixes from short video loops. Works great with high-definition phone videos. 
 
-Example: 
+[Example](https://cartoonbeats.com/radio/2026/07/version-reality-jul-26/): 
 
-<iframe width="560" height="315" src="https://www.youtube.com/embed/8vfvAQUJK4g?si=OWiLlClgObkbIOjt" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+https://www.youtube.com/embed/8vfvAQUJK4g?si=OWiLlClgObkbIOjt
 
 ## Requirements
 
