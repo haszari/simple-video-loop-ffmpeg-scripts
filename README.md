@@ -1,6 +1,10 @@
-# Video Scripts
+# Simple Video Loop FFmpeg Scripts
 
-FFmpeg-based shell scripts for video/audio manipulation. Each script is self-contained, does one thing, and configures via flags.
+Shell scripts for easily producing atmospheric videos for DJ mixes from short video loops. Works great with high-definition phone videos. 
+
+Example: 
+
+<iframe width="560" height="315" src="https://www.youtube.com/embed/8vfvAQUJK4g?si=OWiLlClgObkbIOjt" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
 
 ## Requirements
 
