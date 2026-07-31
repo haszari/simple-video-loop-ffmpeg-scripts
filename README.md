@@ -36,7 +36,10 @@ chmod +x scripts/*.sh
 # Colour LFO — one hue rotation across the whole video
 ./scripts/audio-loop-video.sh --color hue music.mp3 bg.mp4
 
-# Bar-synced colour LFO (32 bars @ 128 BPM)
+# Hardware encode — several × realtime on macOS, CPU free
+./scripts/audio-loop-video.sh -c h264_videotoolbox -Q 60 music.mp3 bg.mp4
+
+# Bar-synced colour LFO (64-bar hue, 32-bar sat @ 128 BPM)
 ./scripts/audio-loop-video.sh --bpm 128 --bars 64 --color hue,sat:0.1:32 music.mp3 bg.mp4
 
 # Render settings saved in a config file
@@ -70,16 +73,17 @@ Loops a video infinitely, then trims to match the audio file duration. The video
 | Flag | Description | Default |
 |---|---|---|
 | `-c`, `--codec` | Video encoder | `libx264` (H.264, QuickTime-compatible) |
-| `-q`, `--crf` | CRF quality | `23` |
+| `-q`, `--crf` | CRF quality, 0–51, lower = better (software encoders only) | `23` |
+| `-Q`, `--video-quality` | Hardware encoder quality, 1–100, higher = better (`h264_videotoolbox`/`hevc_videotoolbox` only) | unset (encoder default) |
 | `-a`, `--audio-codec` | Audio encoder | `aac` |
 | `-o`, `--output` | Output path | `renders/<audio>.<video-ext>` |
-| `-s`, `--start` | Trim audio start time (e.g. `00:01:30`) | — |
-| `-e`, `--end` | Trim audio end time (e.g. `00:45:00`) | — |
-| `-f`, `--fade` | Fade duration in seconds (auto-applied when trimming) | `0.04` (40ms) |
+| `-s`, `--start` | Trim audio start: `HH:MM:SS` or seconds | — |
+| `-e`, `--end` | Trim audio end: `HH:MM:SS` or seconds | — |
+| `-f`, `--fade` | Fade-in/out duration, seconds | `0.04` (40ms) |
 | `-C`, `--color` | Colour LFO presets, comma-separated (see Colour effects) | — |
-| `--color-raw` | Raw ffmpeg colour filter expression (escape hatch) | — |
-| `--bpm` | Beats per minute for bar-synced LFOs | `120` |
-| `--bars` | Global LFO period in bars (per-preset periods override) | whole timeline |
+| `--color-raw` | Raw ffmpeg colour filter expression, `t` in seconds | — |
+| `--bpm` | Tempo for bar-synced LFOs, beats per minute | `120` |
+| `--bars` | Global LFO period, in 4/4 bars (per-preset periods override) | whole output |
 | `--config` | Read args from a config file (`@file` also accepted) | — |
 | `--audio`, `--video` | Long-name aliases for the positional audio/video args | — |
 
@@ -87,32 +91,37 @@ When `--start` or `--end` is provided, a fade-in and fade-out are applied automa
 
 Codec and quality flags are passed through to ffmpeg. See [ffmpeg codecs](https://ffmpeg.org/ffmpeg-codecs.html) for details.
 
-**Encoder settings.** `--codec` selects the video encoder: `libx264` (H.264, default) is the most compatible; `libx265` (HEVC) gives better quality per byte for long videos. `--crf` (Constant Rate Factor) is a perceptual quality target roughly 0–51: lower = higher quality + larger file. `18`–`20` is near-lossless, `23` (the default) is libx264's sweet spot, `28+` starts to look blocky. CRF only applies when re-encoding (it is ignored with `-c copy`).
+**Encoder settings.** `--codec` selects the video encoder: `libx264` (H.264, default) is the most compatible; `libx265` (HEVC) gives better quality per byte for long videos. `--crf` (Constant Rate Factor) is a perceptual quality target roughly 0–51: lower = higher quality + larger file. `18`–`20` is near-lossless, `23` (the default) is libx264's sweet spot, `28+` starts to look blocky. CRF only applies when re-encoding (it is ignored with `-c copy`). The macOS hardware encoders `h264_videotoolbox`/`hevc_videotoolbox` use `-Q/--video-quality` (1–100, higher = better) instead of `-crf`; passing `-q/--crf` to a hardware codec (or `-Q` to a software one) errors with a pointer to the right flag.
 
 **Speed vs quality.** Suggested settings, fastest first:
 
 | Setting | Speed vs default | Trade-off | Usable via script? |
 |---|---|---|---|
+| `-c h264_videotoolbox -Q 60` (macOS hardware) | several × realtime, CPU idle | near-identical quality, similar file size | yes |
+| `-c hevc_videotoolbox -Q 60` (macOS hardware) | several × realtime, CPU idle | near-identical quality, smaller file | yes |
 | `-c libx264 -q 23` (default) | baseline | most compatible; great quality | yes |
 | `-c libx265 -q 23` | ~2–4× more CPU | smaller file at same quality | yes |
 | `-c libvpx-vp9` / `-c libaom-av1` | much slower | smallest files, heaviest CPU | yes |
 | ffmpeg `-preset veryfast` + `-crf 23` | ~2× faster | same quality, slightly larger file | no — run ffmpeg directly |
-| ffmpeg `h264_videotoolbox` (macOS hardware) | CPU idle | near-identical quality | no — run ffmpeg directly |
 
 #### Colour effects (LFO)
 
-`--color` applies a subtle time-based colour effect to the video, evaluated per frame from the filter timestamp — so it drifts across the whole output with no extra render pass (the effect rides on the same encode). Expressions use ffmpeg's expression language: `t` is the running timestamp in seconds, `PI`/`2*PI` are available.
+`--color` applies a subtle time-based colour effect to the video, evaluated per frame from the filter timestamp — so it drifts across the whole output with no extra render pass (the effect rides on the same encode). Each preset is a sine LFO; expressions use ffmpeg's expression language, where `t` is the running timestamp in seconds and `PI`/`2*PI` are available.
 
-Preset syntax:
+Preset syntax (`:params` optional):
 
-| Preset | Effect | Params (defaults) |
-|---|---|---|
-| `hue[:deg[:period]]` | Colour-wheel rotation | deg per cycle (`360`), period |
-| `temp[:amplitude[:period]]` | Warm ↔ cool drift | gamma amplitude (`0.05`), period |
-| `sat[:delta[:period]]` | Saturation pulse | delta (`0.15`), period |
-| `balance[:amount[:period]]` | Green/magenta breathing | gamma amplitude (`0.12`), period |
+| Preset | Effect | Strength (units) | Period |
+|---|---|---|---|
+| `hue[:deg[:period]]` | Colour-wheel rotation | `deg`: hue rotation per LFO cycle, degrees (default `360` = one full rotation) | `period` |
+| `temp[:amplitude[:period]]` | Warm ↔ cool drift | `amplitude`: red up / blue down gamma swing, dimensionless fraction 0–1 (default `0.05` = ±5%) | `period` |
+| `sat[:delta[:period]]` | Saturation pulse | `delta`: saturation swing, dimensionless fraction 0–1 (default `0.15` = ±15%) | `period` |
+| `balance[:amount[:period]]` | Green/magenta breathing | `amount`: green gamma swing, dimensionless fraction 0–1 (default `0.12` = ±12%) | `period` |
 
-`period` is either `whole` (default — one full LFO cycle across the entire output duration, sized from the audio) or a bar count synced to `--bpm`, where `period_seconds = bars × 240 / bpm` (assumes 4/4 time). `--bars` sets a global period for presets that don't specify their own. Precedence: **per-preset period > `--bars` > whole**.
+`period` (LFO cycle length) is either:
+- `whole` (default) — one cycle across the **entire output duration**, in seconds, sized from the audio file; or
+- a **bar count** (positive integer) synced to `--bpm` (default `120`), converted to seconds by `period_seconds = bars × 240 / bpm` (assumes 4/4 time).
+
+`--bars` sets the period for any preset that doesn't specify its own. Precedence: **per-preset period > `--bars` > `whole`**.
 
 ```bash
 # one colour rotation across the whole video

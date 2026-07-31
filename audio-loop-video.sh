@@ -17,7 +17,10 @@
 #
 # Flags:
 #   -c, --codec         Video encoder (default: libx264)
-#   -q, --crf           CRF quality (default: 23)
+#   -q, --crf           CRF quality (default: 23; software encoders only)
+#   -Q, --video-quality Hardware encoder quality 0-100, higher = better
+#                       (h264_videotoolbox / hevc_videotoolbox only; default:
+#                       unset = encoder default)
 #   -a, --audio-codec   Audio encoder (default: aac)
 #   -o, --output        Output file path (default: renders/<audio>.<video-ext>)
 #   -s, --start         Trim audio start time (e.g. 00:01:30)
@@ -44,10 +47,14 @@
 #   expression language, so t is the running timestamp in seconds and
 #   PI / 2*PI are available.
 #
-#   Preset syntax:  hue[:deg[:period]]
-#                   temp[:amplitude[:period]]
-#                   sat[:delta[:period]]
-#                   balance[:amount[:period]]
+#   Preset syntax:  hue[:deg[:period]]           deg = hue rotation per LFO
+#                                                cycle, in degrees (default 360)
+#                   temp[:amplitude[:period]]    amplitude = gamma swing,
+#                                                fraction 0-1 (default 0.05)
+#                   sat[:delta[:period]]         delta = saturation swing,
+#                                                fraction 0-1 (default 0.15)
+#                   balance[:amount[:period]]    amount = green-gamma swing,
+#                                                fraction 0-1 (default 0.12)
 #
 #   period is either 'whole' (default) — one LFO cycle over the entire
 #   output duration — or a bar count synced to --bpm, where
@@ -92,6 +99,7 @@
 #   ./audio-loop-video.sh -s 00:01:30 -e 00:45:00 -f 0.1 music.mp3 bg.mp4
 #   ./audio-loop-video.sh -c libx265 -q 23 -o final.mp4 music.mp3 bg.mp4
 #   ./audio-loop-video.sh -c copy music.mp3 bg.mp4  # fast, no re-encode
+#   ./audio-loop-video.sh -c h264_videotoolbox -Q 60 music.mp3 bg.mp4  # hardware
 #   ./audio-loop-video.sh --color hue music.mp3 bg.mp4
 #   ./audio-loop-video.sh --bpm 128 --bars 64 --color hue,sat music.mp3 bg.mp4
 #   ./audio-loop-video.sh --config show.conf
@@ -115,10 +123,10 @@ time_to_seconds() {
 # Map video codec to conventional file extension
 codec_to_ext() {
   case "$1" in
-    libx264|libx265)    echo "mp4" ;;
-    libaom-av1)         echo "mp4" ;;
-    libvpx-vp9)         echo "webm" ;;
-    copy)               echo "" ;;  # keep input extension
+    libx264|libx265|h264_videotoolbox|hevc_videotoolbox) echo "mp4" ;;
+    libaom-av1)        echo "mp4" ;;
+    libvpx-vp9)        echo "webm" ;;
+    copy)              echo "" ;;  # keep input extension
   esac
 }
 
@@ -388,6 +396,8 @@ setup_color() {
 
 CODEC="libx264"
 CRF="23"
+CRF_SET=false
+VIDEO_QUALITY=""
 AUDIO_CODEC="aac"
 OUTPUT=""
 START=""
@@ -411,7 +421,8 @@ set -- "${ARGS[@]}"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -c|--codec)        CODEC="${2:?"-c requires a value"}"; shift 2 ;;
-    -q|--crf)          CRF="${2:?"-q requires a value"}"; shift 2 ;;
+    -q|--crf)          CRF="${2:?"-q requires a value"}"; CRF_SET=true; shift 2 ;;
+    -Q|--video-quality) VIDEO_QUALITY="${2:?"-Q requires a value"}"; shift 2 ;;
     -a|--audio-codec)  AUDIO_CODEC="${2:?"-a requires a value"}"; shift 2 ;;
     -o|--output)       OUTPUT="${2:?"-o requires a value"}"; shift 2 ;;
     -s|--start)        START="${2:?"-s requires a value"}"; shift 2 ;;
@@ -455,8 +466,8 @@ VIDEO="${POSARGS[1]:-}"
 
 # Validate codec
 case "$CODEC" in
-  copy|libx264|libx265|libaom-av1|libvpx-vp9) ;;
-  *) die "unknown video codec: $CODEC (allowed: copy libx264 libx265 libaom-av1 libvpx-vp9)" ;;
+  copy|libx264|libx265|libaom-av1|libvpx-vp9|h264_videotoolbox|hevc_videotoolbox) ;;
+  *) die "unknown video codec: $CODEC (allowed: copy libx264 libx265 libaom-av1 libvpx-vp9 h264_videotoolbox hevc_videotoolbox)" ;;
 esac
 
 # Validate audio codec
@@ -467,6 +478,24 @@ esac
 
 # Validate CRF
 [[ "$CRF" =~ ^[0-9]+$ ]] || die "CRF must be a non-negative integer, got: $CRF"
+
+# Validate video quality (hardware encoders only; 0-100, higher = better)
+if [[ -n "$VIDEO_QUALITY" ]]; then
+  [[ "$VIDEO_QUALITY" =~ ^[0-9]+$ ]] || die "--video-quality must be an integer 0-100, got: $VIDEO_QUALITY"
+  (( VIDEO_QUALITY <= 100 )) || die "--video-quality must be 0-100, got: $VIDEO_QUALITY"
+  case "$CODEC" in
+    h264_videotoolbox|hevc_videotoolbox) ;;
+    *) die "--video-quality is for h264_videotoolbox/hevc_videotoolbox; use -q/--crf for libx264/libx265/libvpx-vp9/libaom-av1" ;;
+  esac
+fi
+
+# -q/--crf only makes sense for CRF-based (software) encoders
+if [[ "$CRF_SET" == true ]]; then
+  case "$CODEC" in
+    h264_videotoolbox|hevc_videotoolbox)
+      die "-q/--crf is for software encoders (libx264 etc.); use -Q/--video-quality for $CODEC" ;;
+  esac
+fi
 
 # Validate fade
 [[ "$FADE" =~ ^[0-9]*\.?[0-9]+$ ]] || die "fade must be a positive number, got: $FADE"
@@ -529,9 +558,21 @@ fi
 
 # Build ffmpeg codec args
 CODEC_ARGS=(-c:v "$CODEC")
-[[ -n "$CRF" ]] && CODEC_ARGS+=(-crf "$CRF")
+case "$CODEC" in
+  h264_videotoolbox|hevc_videotoolbox)
+    # Hardware encoders use -q:v (1-100, higher = better), not -crf
+    [[ -n "$VIDEO_QUALITY" ]] && CODEC_ARGS+=(-q:v "$VIDEO_QUALITY")
+    ;;
+  copy)
+    ;;  # no quality options with stream copy
+  *)
+    [[ -n "$CRF" ]] && CODEC_ARGS+=(-crf "$CRF")
+    ;;
+esac
 # Use hvc1 tag for HEVC — required for QuickTime/macOS compatibility
-[[ "$CODEC" == "libx265" ]] && CODEC_ARGS+=(-tag:v hvc1)
+case "$CODEC" in
+  libx265|hevc_videotoolbox) CODEC_ARGS+=(-tag:v hvc1) ;;
+esac
 
 # Build video filter args
 VF_ARGS=()
